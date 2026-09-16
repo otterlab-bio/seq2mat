@@ -1,0 +1,40 @@
+# Binaries
+/seq2mat
+/seq2mat.exe
+seq2mat-*
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test and output directories
+/output/
+/output_*/
+testdata/
+ci-artifacts/
+
+# Go build cache
+*.out
+go.work
+go.work.sum
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# R specific
+.Rhistory
+.RData
+.Rproj.user
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

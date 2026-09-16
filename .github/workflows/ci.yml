@@ -1,0 +1,115 @@
+name: seq2mat CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  converter-contract:
+    name: Go quality gates and matrix contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout seq2mat
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare evidence directory
+        run: mkdir -p ci-artifacts
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          gofmt -l . | tee ci-artifacts/gofmt.txt
+          if [ -s ci-artifacts/gofmt.txt ]; then
+            echo "The following files are not gofmt-clean:" >&2
+            exit 1
+          fi
+
+      - name: Run static analysis
+        run: go vet ./... 2>&1 | tee ci-artifacts/go-vet.log
+
+      - name: Run test suite
+        run: go test -count=1 ./... 2>&1 | tee ci-artifacts/go-test.log
+
+      - name: Build binary
+        run: go build -buildvcs=false -o ci-artifacts/seq2mat ./cmd/seq2mat
+
+      - name: HTSeq-to-matrix contract smoke
+        run: |
+          set -euo pipefail
+          input_directory="$(mktemp -d)"
+          output_directory="$(mktemp -d)"
+          printf 'ENSG00000121410\t120\nENSG00000175899\t80\nENSG00000171428\t0\nENSG00099999999\t15\n' \
+            > "$input_directory/sampleA_human.txt"
+          printf 'ENSG00000121410\t90\nENSG00000175899\t110\nENSG00000171428\t40\n' \
+            > "$input_directory/sampleB_human.txt"
+          ./ci-artifacts/seq2mat \
+            --htseq_dir "$input_directory" \
+            --output_dir "$output_directory" 2>&1 | tee ci-artifacts/seq2mat-smoke.log
+          cp "$output_directory/matrix_count.txt" \
+             "$output_directory/matrix_norm.txt" \
+             "$output_directory/matrix_manifest.json" ci-artifacts/
+
+      - name: Assert matrix and manifest contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          count_lines = Path('ci-artifacts/matrix_count.txt').read_text().splitlines()
+          assert count_lines[0] == 'Gene\tsampleA\tsampleB', count_lines[0]
+          counts = {}
+          for line in count_lines[1:]:
+              symbol, first, second = line.split('\t')
+              counts[symbol] = [first, second]
+          assert counts['A1BG'] == ['120', '90'], counts.get('A1BG')
+          assert counts['A2M'] == ['80', '110'], counts.get('A2M')
+          assert counts['NAT1'] == ['0', '40'], counts.get('NAT1')
+          assert counts['ENSG00099999999'] == ['15', '0'], counts.get('ENSG00099999999')
+
+          manifest = json.loads(Path('ci-artifacts/matrix_manifest.json').read_text())
+          assert manifest['schema_version'] == 'seq2mat.matrix/1.0.0', manifest['schema_version']
+          assert manifest['mapping']['schema_version'] == 'seq2mat.mapping/1.0.0'
+          assert manifest['species'] == 'human'
+          assert manifest['sample_count'] == 2
+          assert manifest['row_count'] == 4
+          assert manifest['conversion']['UnmappedCount'] == 1
+          print('seq2mat matrix and manifest contract passed')
+          PY
+
+      - name: Upload seq2mat evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seq2mat-matrix-evidence
+          path: ci-artifacts/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Job summary
+        if: always()
+        continue-on-error: true
+        run: |
+          bash scripts/ci/job-summary.sh \
+            --verdict "${{ job.status }}" \
+            --title "seq2mat — HTSeq to count matrix" \
+            --checked "Formatting, static analysis, the Go test suite, a build, and a counted HTSeq-to-matrix conversion whose matrix and manifest contract is asserted." \
+            --check "gofmt / static analysis|clean|see step log|-" \
+            --check "Go test suite|all pass|see step log|-" \
+            --check "Binary builds|seq2mat produced|see step log|-" \
+            --check "Matrix and manifest contract|counts, dimensions and UnmappedCount as declared|see step log|-" \
+            --artifact "seq2mat-matrix-evidence" \
+            --limit "Contract coverage on the CI fixture, including the unmapped-count path. It is not a production-scale expression matrix qualification."
