@@ -2,7 +2,7 @@
 
 **A standalone Go converter from HTSeq count files to traceable expression matrices.**
 
-`seq2mat` merges per-sample HTSeq outputs, maps identifiers to gene symbols using an embedded database, aggregates repeated symbols, and writes count and log2-normalized matrices without an R runtime.
+`seq2mat` merges per-sample HTSeq outputs, maps identifiers to gene symbols using an embedded database, aggregates repeated symbols, and writes count and log2-normalized matrices without an R runtime (release and normal source builds embed the mapping CSVs; R/Rscript is only needed to regenerate them from the upstream .rda sources).
 
 ## Quick start
 
